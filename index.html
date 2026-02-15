@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Voice Recorder</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen flex items-center justify-center">
+
+  <div class="w-full max-w-xl mx-auto p-8">
+    <h1 class="text-5xl font-semibold text-gray-800 text-center mb-2">Voice Recorder</h1>
+    <p id="status" class="text-center text-gray-500 text-lg mb-8 h-5">Ready</p>
+
+    <!-- Timer -->
+    <p id="timer" class="text-center text-4xl font-mono text-gray-700 mb-8">00:00</p>
+
+    <!-- Buttons -->
+    <div class="grid grid-cols-2 gap-4">
+
+      <!-- Record -->
+      <button id="btnRecord" onclick="handleRecord()"
+        class="col-span-2 py-4 rounded-xl text-2xl font-medium transition-colors
+               bg-red-500 hover:bg-red-600 text-white focus:outline-none focus:ring-4 focus:ring-red-300">
+        ● Record
+      </button>
+
+      <!-- Pause -->
+      <button id="btnPause" onclick="handlePause()" disabled
+        class="py-4 rounded-xl text-xl font-medium transition-colors
+               bg-yellow-400 hover:bg-yellow-500 text-gray-800 disabled:opacity-40 disabled:cursor-not-allowed
+               focus:outline-none focus:ring-4 focus:ring-yellow-300">
+        Pause
+      </button>
+
+      <!-- Play -->
+      <button id="btnPlay" onclick="handlePlay()" disabled
+        class="py-4 rounded-xl text-xl font-medium transition-colors
+               bg-green-500 hover:bg-green-600 text-white disabled:opacity-40 disabled:cursor-not-allowed
+               focus:outline-none focus:ring-4 focus:ring-green-300">
+        Play
+      </button>
+
+      <!-- Erase -->
+      <button id="btnErase" onclick="handleErase()" disabled
+        class="py-4 rounded-xl text-xl font-medium transition-colors
+               bg-gray-300 hover:bg-gray-400 text-gray-800 disabled:opacity-40 disabled:cursor-not-allowed
+               focus:outline-none focus:ring-4 focus:ring-gray-200">
+        ✕ Erase
+      </button>
+
+      <!-- Save -->
+      <button id="btnSave" onclick="handleSave()" disabled
+        class="py-4 rounded-xl text-xl font-medium transition-colors
+               bg-blue-500 hover:bg-blue-600 text-white disabled:opacity-40 disabled:cursor-not-allowed
+               focus:outline-none focus:ring-4 focus:ring-blue-300">
+        Save
+      </button>
+
+    </div>
+
+    <!-- Note about pause -->
+    <p class=" text-gray-400 text-center mt-6 leading-relaxed">
+      Pause uses the MediaRecorder <em>pause/resume</em> API.<br>
+      If your browser doesn't support it the recording will stop instead.
+    </p>
+  </div>
+
+  <script>
+    // Elements
+    const btnRecord = document.getElementById('btnRecord');
+    const btnPause  = document.getElementById('btnPause');
+    const btnPlay   = document.getElementById('btnPlay');
+    const btnErase  = document.getElementById('btnErase');
+    const btnSave   = document.getElementById('btnSave');
+    const status    = document.getElementById('status');
+    const timerEl   = document.getElementById('timer');
+
+    // State
+    let mediaRecorder = null;
+    let chunks        = [];
+    let audioBlob     = null;
+    let audioUrl      = null;
+    let audioPlayer   = null;
+    let stream        = null;
+    let timerInterval  = null;
+    let seconds        = 0;
+    let isRecording    = false;
+    let isPaused       = false;
+
+    // Helpers 
+    function setStatus(msg) {
+      status.textContent = msg;
+    }
+
+    function formatTime(s) {
+      const m = String(Math.floor(s / 60)).padStart(2, '0');
+      const sec = String(s % 60).padStart(2, '0');
+      return `${m}:${sec}`;
+    }
+
+    function startTimer() {
+      seconds = 0;
+      timerEl.textContent = formatTime(seconds);
+      timerInterval = setInterval(() => {
+        seconds++;
+        timerEl.textContent = formatTime(seconds);
+      }, 1000);
+    }
+
+    function stopTimer() {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
+
+    function pauseTimer() {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
+
+    function resumeTimer() {
+      timerInterval = setInterval(() => {
+        seconds++;
+        timerEl.textContent = formatTime(seconds);
+      }, 1000);
+    }
+
+    function updateButtons() {
+      if (isRecording && !isPaused) {
+        // Currently recording
+        btnRecord.textContent = '■ Stop';
+        btnRecord.classList.replace('bg-red-500', 'bg-red-700');
+        btnRecord.classList.replace('hover:bg-red-600', 'hover:bg-red-800');
+        btnPause.disabled = false;
+        btnPause.textContent = 'Pause';
+        btnPlay.disabled = true;
+        btnErase.disabled = true;
+        btnSave.disabled = true;
+      } else if (isRecording && isPaused) {
+        // Paused
+        btnRecord.textContent = 'Stop';
+        btnPause.disabled = false;
+        btnPause.textContent = 'Resume';
+        btnPlay.disabled = true;
+        btnErase.disabled = true;
+        btnSave.disabled = true;
+      } else {
+        // Idle
+        btnRecord.textContent = '● Record';
+        btnRecord.classList.replace('bg-red-700', 'bg-red-500');
+        btnRecord.classList.replace('hover:bg-red-800', 'hover:bg-red-600');
+        btnPause.disabled = true;
+        btnPause.textContent = 'Pause';
+        const hasAudio = !!audioBlob;
+        btnPlay.disabled = !hasAudio;
+        btnErase.disabled = !hasAudio;
+        btnSave.disabled = !hasAudio;
+      }
+    }
+
+    // Handlers
+
+    async function handleRecord() {
+      // If already recording then stop
+      if (isRecording) {
+        mediaRecorder.stop();
+        return;
+      }
+
+      // Start a new recording
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (err) {
+        setStatus('Microphone access is needed to record your voice.');
+        return;
+      }
+
+      chunks = [];
+      audioBlob = null;
+      audioUrl = null;
+
+      // Pick a supported MIME type
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
+
+      mediaRecorder = new MediaRecorder(stream, { mimeType });
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        // Release mic
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+
+        audioBlob = new Blob(chunks, { type: mimeType });
+        audioUrl = URL.createObjectURL(audioBlob);
+
+        isRecording = false;
+        isPaused = false;
+        stopTimer();
+        setStatus('Recording saved. You can play, save, or erase it.');
+        updateButtons();
+      };
+
+      mediaRecorder.start(200); // collect data every 200ms
+      isRecording = true;
+      isPaused = false;
+      startTimer();
+      setStatus('Recording…');
+      updateButtons();
+    }
+
+    function handlePause() {
+      if (!mediaRecorder || !isRecording) return;
+
+      if (!isPaused) {
+        // Pause
+        if (typeof mediaRecorder.pause === 'function') {
+          mediaRecorder.pause();
+          isPaused = true;
+          pauseTimer();
+          setStatus('Paused');
+        } else {
+          // Browser doesn't support pause, then stop 
+          mediaRecorder.stop();
+          setStatus('Pause not supported — recording stopped.');
+          return;
+        }
+      } else {
+        // Resume
+        mediaRecorder.resume();
+        isPaused = false;
+        resumeTimer();
+        setStatus('Recording…');
+      }
+      updateButtons();
+    }
+
+    function handlePlay() {
+      if (!audioUrl) return;
+
+      // Stop any ongoing playback first
+      if (audioPlayer) {
+        audioPlayer.pause();
+        audioPlayer = null;
+      }
+
+      audioPlayer = new Audio(audioUrl);
+      audioPlayer.onended = () => setStatus('Playback finished.');
+      audioPlayer.play();
+      setStatus('Playing…');
+    }
+
+    function handleErase() {
+      // Stop playback if active
+      if (audioPlayer) {
+        audioPlayer.pause();
+        audioPlayer = null;
+      }
+
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      audioBlob = null;
+      audioUrl = null;
+      chunks = [];
+      seconds = 0;
+      timerEl.textContent = formatTime(0);
+      setStatus('Recording erased.');
+      updateButtons();
+    }
+
+    function handleSave() {
+      if (!audioBlob) return;
+
+      const ext = audioBlob.type.includes('webm') ? 'webm' : 'ogg';
+      const a = document.createElement('a');
+      a.href = audioUrl;
+      a.download = `recording.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setStatus('File downloaded.');
+    }
+
+    // Init
+    updateButtons();
+  </script>
+
+</body>
+</html>

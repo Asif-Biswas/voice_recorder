@@ -9,4 +9,4 @@
 - Output format is WebM. Some players may not support it natively.
 
 ## Tested browsers
-- Google Chrome 120+, Mozilla Firefox 120+, Microsoft Edge 120+
+- Google Chrome (Version 144), Mozilla Firefox (Version 147), Microsoft Edge (Version 145)
